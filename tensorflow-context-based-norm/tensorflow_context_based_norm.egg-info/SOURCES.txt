@@ -1,0 +1,12 @@
+LICENCE
+README.md
+setup.py
+tensorflow-context-based-norm/AdaptiveContextNorm.py
+tensorflow-context-based-norm/ContextExtendedNorm.py
+tensorflow-context-based-norm/ContextNorm.py
+tensorflow-context-based-norm/__init__.py
+tensorflow_context_based_norm.egg-info/PKG-INFO
+tensorflow_context_based_norm.egg-info/SOURCES.txt
+tensorflow_context_based_norm.egg-info/dependency_links.txt
+tensorflow_context_based_norm.egg-info/requires.txt
+tensorflow_context_based_norm.egg-info/top_level.txt

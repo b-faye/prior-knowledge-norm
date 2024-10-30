@@ -1,0 +1,12 @@
+LICENCE
+README.md
+setup.py
+pytorch-context-based-norm/AdaptiveContextNorm.py
+pytorch-context-based-norm/ContextExtendedNorm.py
+pytorch-context-based-norm/ContextNorm.py
+pytorch-context-based-norm/__init__.py
+pytorch_context_based_norm.egg-info/PKG-INFO
+pytorch_context_based_norm.egg-info/SOURCES.txt
+pytorch_context_based_norm.egg-info/dependency_links.txt
+pytorch_context_based_norm.egg-info/requires.txt
+pytorch_context_based_norm.egg-info/top_level.txt
