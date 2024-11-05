@@ -147,4 +147,4 @@ history = model.fit(X, Y, epochs=10)
 ```
 
 
-This README provides an overview of the Cluster-Based Normalization package along with examples demonstrating the usage of different normalization layers. You can modify and extend these examples according to your specific requirements.
+This README provides an overview of the Context-Based Normalization package along with examples demonstrating the usage of different normalization layers. You can modify and extend these examples according to your specific requirements.
