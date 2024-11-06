@@ -3,105 +3,87 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class AdaptiveContextNorm(nn.Module):
-    def __init__(self, num_contexts, input_dim, epsilon=1e-3, momentum=0.9):
+    def __init__(self, num_contexts, epsilon=1e-3, momentum=0.9):
         """
         Initialize the Adaptive Context-Based Normalization layer.
 
         :param num_contexts: The number of contexts for normalization.
-        :param input_dim: The dimension of the layer's input.
         :param epsilon: A small positive value to prevent division by zero during normalization.
         :param momentum: The momentum for updating mean, variance, and prior during training.
         """
         super(AdaptiveContextNorm, self).__init__()
-        self.input_dim = input_dim
         self.num_contexts = num_contexts
         self.epsilon = epsilon
         self.momentum = momentum
 
-        self.mean = nn.Parameter(torch.Tensor(self.num_contexts, self.input_dim))
-        self.variance = nn.Parameter(torch.Tensor(self.num_contexts, self.input_dim))
-        self.prior = nn.Parameter(torch.Tensor(self.num_contexts, 1))
+        # Initialize mean, variance, and prior weights
+        self.mean = nn.Parameter(torch.empty(num_contexts, 1))
+        self.variance = nn.Parameter(torch.empty(num_contexts, 1))
+        self.prior = nn.Parameter(torch.empty(num_contexts, 1))
 
         self.reset_parameters()
 
     def reset_parameters(self):
-        """
-        Reset parameters for mean, variance, and prior.
-        """
         nn.init.uniform_(self.mean, -1.0, 1.0)
         nn.init.uniform_(self.variance, 0.001, 0.01)
-        nn.init.uniform_(self.prior, 0.01, 0.99)
-        self.prior.data /= torch.sum(self.prior.data, dim=0)
+        initial_prior = torch.rand_like(self.prior)
+        self.prior.data = initial_prior / initial_prior.sum(dim=0, keepdim=True)
 
     def forward(self, x):
-        """
-        Apply the Adaptive Context-Based Normalization to the input data.
+        # Determine input shape
+        if x.ndim == 4:  # (Batch, Channel, H, W)
+            batch_size, channels, height, width = x.shape
+            input_dim = channels
+            spatial_dims = (height, width)
+        elif x.ndim == 3:  # (Batch, timestamp, dim)
+            batch_size, timestamp, input_dim = x.shape
+            spatial_dims = None
+        elif x.ndim == 2:  # (Batch, dim)
+            batch_size, input_dim = x.shape
+            spatial_dims = None
+        else:
+            raise ValueError("Input shape not supported")
 
-        :param x: The input data to be normalized.
+        # Expand mean, variance, and prior for batch processing
+        mean = self.mean.expand(self.num_contexts, input_dim)
+        var = F.softplus(self.variance).expand(self.num_contexts, input_dim)
+        prior = F.softmax(self.prior, dim=0)
 
-        :return normalized_x: The normalized output data.
-        """
+        # Prepare output tensor
         normalized_x = torch.zeros_like(x)
-        mean = self.mean
-        var = self.variance
-        prior = self.prior
-        num_expand_dims = len(x.shape) - 2
-
-        for _ in range(num_expand_dims):
-            mean = mean.unsqueeze(1)
-            var = var.unsqueeze(1)
-
-        var = F.softplus(var)
-        prior = F.softmax(prior, dim=0)
 
         for k in range(self.num_contexts):
-            mean_k = mean[k, :]
-            var_k = var[k, :]
-            prior_k = prior[k, :]
+            mean_k = mean[k].view(1, -1, 1, 1) if spatial_dims else mean[k]  # Reshape for 4D input
+            var_k = var[k].view(1, -1, 1, 1) if spatial_dims else var[k]
+            prior_k = prior[k]
 
-            p_x_given_k = prior_k * torch.exp(-0.5 * ((x - mean_k) * (1 / (var_k + self.epsilon)) * (x - mean_k)))
-
-            p_x_given_i = torch.zeros_like(p_x_given_k)
-            for i in range(self.num_contexts):
-                mean_i = mean[i, :]
-                var_i = var[i, :]
-
-                posterior_proba = prior[i] * torch.exp(-0.5 * ((x - mean_i) * (1 / (var_i + self.epsilon)) * (x - mean_i)))
-
-                p_x_given_i += posterior_proba
-
+            # Compute probabilities
+            p_x_given_k = prior_k * torch.exp(-0.5 * ((x - mean_k) / (var_k + self.epsilon))**2)
+            p_x_given_i = sum(prior[i] * torch.exp(-0.5 * ((x - mean[i].view(1, -1, 1, 1) if spatial_dims else mean[i]) /
+                                                           (var[i].view(1, -1, 1, 1) if spatial_dims else var[i] + self.epsilon))**2)
+                              for i in range(self.num_contexts))
             tau_k = p_x_given_k / (p_x_given_i + self.epsilon)
-            
+
             if self.training:
-                sum_tau_k = torch.sum(tau_k, dim=tuple(range(x.dim()))[:-1])
-                hat_tau_k = tau_k / (sum_tau_k + self.epsilon)
-
-                prod = hat_tau_k * x
-                expectation = torch.mean(prod, dim=tuple(range(x.dim()))[1:-1])
-                expectation = expectation.unsqueeze(-1).expand_as(x)
-
+                hat_tau_k = tau_k / (tau_k.sum(dim=tuple(range(x.ndim))[:-1], keepdim=True) + self.epsilon)
+                expectation = (hat_tau_k * x).mean(dim=tuple(range(x.ndim))[1:-1], keepdim=True)
                 v_i_k = x - expectation
-
-                prod_bis = hat_tau_k * (prod * prod)
-                variance = torch.mean(prod_bis, dim=tuple(range(x.dim()))[1:-1])
-                variance = variance.unsqueeze(-1).expand_as(v_i_k)
-
+                variance = (hat_tau_k * (v_i_k**2)).mean(dim=tuple(range(x.ndim))[1:-1], keepdim=True)
                 hat_x_i_k = v_i_k / torch.sqrt(variance + self.epsilon)
-
                 hat_x_i = (tau_k / torch.sqrt(prior_k + self.epsilon)) * hat_x_i_k
-
                 normalized_x += hat_x_i
 
-                updated_mean = torch.mean(hat_x_i, dim=tuple(range(x.dim()))[:-1])
-                updated_var = torch.var(hat_x_i, dim=tuple(range(x.dim()))[:-1])
-                updated_prior = torch.mean(tau_k)
+                # Update mean, variance, and prior
+                updated_mean = hat_x_i.mean(dim=tuple(range(x.ndim))[:-1])
+                updated_var = hat_x_i.var(dim=tuple(range(x.ndim))[:-1])
+                updated_prior = tau_k.mean()
 
-                self.mean[k, :].data = self.momentum * self.mean[k, :] + (1.0 - self.momentum) * updated_mean
-                self.variance[k, :].data = self.momentum * self.variance[k, :] + (1.0 - self.momentum) * updated_var
-                self.prior[k, 0].data = self.momentum * self.prior[k, 0] + (1.0 - self.momentum) * updated_prior
+                self.mean[k].data = self.momentum * self.mean[k] + (1 - self.momentum) * updated_mean
+                self.variance[k].data = self.momentum * self.variance[k] + (1 - self.momentum) * updated_var
+                self.prior[k].data = self.momentum * self.prior[k] + (1 - self.momentum) * updated_prior
 
             else:
-                hat_x_i_k = (x - mean_k) / (torch.sqrt(var_k + self.epsilon))
+                hat_x_i_k = (x - mean_k) / torch.sqrt(var_k + self.epsilon)
                 hat_x_i = (tau_k / torch.sqrt(prior_k + self.epsilon)) * hat_x_i_k
                 normalized_x += hat_x_i
 
@@ -109,4 +91,3 @@ class AdaptiveContextNorm(nn.Module):
 
     def call(self, x):
         return self.forward(x)
-
