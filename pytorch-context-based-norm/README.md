@@ -137,7 +137,7 @@ from pytorch_context_based_norm import AdaptiveContextNorm
 class MyModel(nn.Module):
     def __init__(self):
         super(MyModel, self).__init__()
-        self.context_norm = AdaptiveContextNorm(num_contexts=3, input_dim=5)
+        self.context_norm = AdaptiveContextNorm(num_contexts=3)
         self.hidden_layer = nn.Linear(5, 10)
         self.output_layer = nn.Linear(10, 5)
 
